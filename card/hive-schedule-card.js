@@ -41,6 +41,8 @@ for (let t = 5; t <= 28; t += 0.5) HEAT_CHOICES.push(t);
 
 const fmt = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
+const INCOMPLETE = "Receiver didn't answer for every day. Try ↻.";
+
 class HiveScheduleCard extends HTMLElement {
   setConfig(config) {
     if (!config.topic) throw new Error("hive-schedule-card: `topic` is required (e.g. z2m/heating)");
@@ -100,12 +102,14 @@ class HiveScheduleCard extends HTMLElement {
     await this._publish("get", { weekly_schedule_heat: "" });
     await new Promise((r) => setTimeout(r, 1500));
     await this._publish("get", { weekly_schedule_water: "" });
+    // The receiver answers one message per day per channel, slowly; give it time, and
+    // let a late reply clear the warning (see _onMessage).
     setTimeout(() => {
       if (this._status.startsWith("Reading")) {
-        this._status = this._complete() ? "" : "Receiver didn't answer for every day. Try ↻.";
+        this._status = this._complete() ? "" : INCOMPLETE;
         if (!this._edit) this._render();
       }
-    }, 6000);
+    }, 15000);
   }
 
   _complete() { return ["heat", "water"].every((c) => DAYS.every((d) => this._sched[c][d.key])); }
@@ -123,7 +127,7 @@ class HiveScheduleCard extends HTMLElement {
       }
     }
     if (changed) {
-      if (this._status.startsWith("Reading") && this._complete()) this._status = "";
+      if ((this._status.startsWith("Reading") || this._status === INCOMPLETE) && this._complete()) this._status = "";
       if (!this._edit) this._render();
     }
   }
