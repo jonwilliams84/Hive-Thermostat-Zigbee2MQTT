@@ -165,9 +165,10 @@ edits the same data. Zigbee2MQTT reads it with
 ### `card/hive-schedule-card.js`
 
 A Lovelace card that shows both schedules as a week grid, edits any day's 6 slots
-(and copies them to other days), and switches each channel between
-**Thermostat schedule** (receiver in `auto`) and **Home Assistant** (receiver in
-manual, so automations drive it). Copy it to `/config/www/`, register
+(and copies them to other days), and sets each channel's mode the way the
+thermostat shows it: heating **Off / Schedule / Manual** (with a target
+temperature), hot water **Off / Schedule / On**. Only Schedule runs the grid;
+Manual / On / Off are what HA automations use to drive the boiler directly. Copy it to `/config/www/`, register
 `/local/hive-schedule-card.js` as a `module` resource, then:
 
 ```yaml

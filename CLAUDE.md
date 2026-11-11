@@ -19,7 +19,7 @@ caught by automations that emit correctly-formatted JSON to the real device.
   - `config_mqtt/hive.yaml` — MQTT `sensor:` + `climate:` (the proxy entity).
   - `config_input_number/hive.yaml` — helpers: boost temp, frost prevention, boost duration.
   - `config_automation/hive.yaml` — automations that translate proxy commands → device topics.
-- `card/hive-schedule-card.js` — Lovelace card: week grid + editor for the schedule stored ON the SLR2, plus the per-channel Thermostat/Home Assistant switch. Plain JS, no build; deployed to HA `/config/www/`.
+- `card/hive-schedule-card.js` — Lovelace card: week grid + editor for the schedule stored ON the SLR2, plus per-channel mode (heat Off/Schedule/Manual + target, water Off/Schedule/On). Plain JS, no build; deployed to HA `/config/www/`.
 - `SLR2/config_automation/clock_sync.yaml` — hourly genTime write; the SLR2 never syncs its own clock.
 - `Capture.PNG` — Lovelace screenshot. `README.md` has the simple-thermostat card YAML.
 

@@ -12,8 +12,11 @@
  * `<topic>/get {"weekly_schedule_heat": ""}`. The receiver answers one message per day.
  * Writing: `<topic>/set {"weekly_schedule_heat": {dayofweek: [...], transitions: [...]}}`.
  *
- * "Runs on" switch: Thermostat = receiver in auto (its schedule). Home Assistant = receiver
- * in manual (heat / water on-off), so automations drive it directly.
+ * Mode, per channel, exactly as the receiver and thermostat show them:
+ *   Heating:   Off | Schedule | Manual (target temperature, set here, on the dial or by HA)
+ *   Hot water: Off | Schedule | On
+ * Schedule = receiver in auto, running the schedule below by itself. Manual / On / Off are
+ * what HA automations use to drive the boiler directly.
  *
  * Config:
  *   type: custom:hive-schedule-card
@@ -62,7 +65,8 @@ class HiveScheduleCard extends HTMLElement {
     this._hass = hass;
     if (first) this._connect();
     // Re-render only for state we show (mode), never while an edit is open.
-    const sig = [hass.states[this._config.heat_entity]?.state, hass.states[this._config.water_entity]?.state].join("|");
+    const heat = hass.states[this._config.heat_entity];
+    const sig = [heat?.state, heat?.attributes?.temperature, hass.states[this._config.water_entity]?.state].join("|");
     if (sig !== this._sig) { this._sig = sig; if (!this._edit) this._render(); }
   }
 
@@ -152,25 +156,35 @@ class HiveScheduleCard extends HTMLElement {
     return segs;
   }
 
+  // Current mode in the receiver's own terms. hive_local_thermostat reports heating as
+  // climate hvac_mode off/heat/auto (heat = Manual) and water as select auto/heat/off/boost.
   _mode(ch) {
-    const s = this._hass?.states[ch === "heat" ? this._config.heat_entity : this._config.water_entity]?.state;
-    return { raw: s, thermostat: s === "auto" };
+    if (ch === "heat") {
+      const st = this._hass?.states[this._config.heat_entity];
+      const m = { off: "off", auto: "schedule", heat: "manual" }[st?.state];
+      return { mode: st?.attributes?.preset_mode === "boost" ? "boost" : m, target: st?.attributes?.temperature };
+    }
+    const s = this._hass?.states[this._config.water_entity]?.state;
+    return { mode: { off: "off", auto: "schedule", heat: "on", boost: "boost" }[s] };
   }
 
-  async _setRunsOn(ch, thermostat) {
-    const now = new Date();
-    const dayIdx = DAYS.findIndex((d) => d.key === JS_DAY_TO_KEY[now.getDay()]);
-    const scheduledOn = this._isOn(ch, this._valueAt(ch, dayIdx, now.getHours() * 60 + now.getMinutes()) ?? 0);
+  async _setMode(ch, mode) {
     if (ch === "heat") {
       await this._hass.callService("climate", "set_hvac_mode", {
-        entity_id: this._config.heat_entity, hvac_mode: thermostat ? "auto" : "heat",
+        entity_id: this._config.heat_entity, hvac_mode: { off: "off", schedule: "auto", manual: "heat" }[mode],
       });
     } else {
-      // Hand over without a jump: in HA mode, start from whatever the schedule says right now.
       await this._hass.callService("select", "select_option", {
-        entity_id: this._config.water_entity, option: thermostat ? "auto" : (scheduledOn ? "heat" : "off"),
+        entity_id: this._config.water_entity, option: { off: "off", schedule: "auto", on: "heat" }[mode],
       });
     }
+  }
+
+  async _nudgeTarget(delta) {
+    const cur = Number(this._mode("heat").target);
+    if (!Number.isFinite(cur)) return;
+    const t = Math.min(32, Math.max(5, Math.round((cur + delta) * 2) / 2));
+    await this._hass.callService("climate", "set_temperature", { entity_id: this._config.heat_entity, temperature: t });
   }
 
   _openEditor(dayIdx) {
@@ -283,6 +297,9 @@ class HiveScheduleCard extends HTMLElement {
         .seg2 button { border:none; background:none; padding:6px 10px; cursor:pointer; color: var(--primary-text-color); font: inherit; font-size: .95em; }
         .seg2 button.sel { background: var(--primary-color); color: var(--text-primary-color, #fff); }
         .rawmode { opacity:.7; }
+        .target { display:flex; align-items:center; gap:6px; margin-left:auto; color: var(--primary-text-color); }
+        .target b { font-size: 1.15em; min-width: 3.2em; text-align:center; }
+        .step { width: 30px; height: 30px; border-radius: 50%; border:1px solid var(--divider-color); background:none; color: var(--primary-text-color); font-size: 1.1em; cursor:pointer; }
         .row { display:flex; align-items:center; gap:8px; margin: 5px 0; cursor:pointer; }
         .day { width: 34px; font-size:.9em; color: var(--secondary-text-color); }
         .day.today { color: var(--primary-color); font-weight:600; }
@@ -324,23 +341,25 @@ class HiveScheduleCard extends HTMLElement {
           <button class="tab ${ch === "heat" ? "sel" : ""}" data-tab="heat">Heating</button>
           <button class="tab ${ch === "water" ? "sel" : ""}" data-tab="water">Hot water</button>
         </div>
-        <div class="runs">Runs on
+        <div class="runs">Mode
           <div class="seg2">
-            <button class="${mode.thermostat ? "sel" : ""}" data-runs="thermostat">Thermostat schedule</button>
-            <button class="${mode.thermostat ? "" : "sel"}" data-runs="ha">Home Assistant</button>
+            ${(ch === "heat" ? [["off", "Off"], ["schedule", "Schedule"], ["manual", "Manual"]] : [["off", "Off"], ["schedule", "Schedule"], ["on", "On"]])
+              .map(([k, l]) => `<button class="${mode.mode === k ? "sel" : ""}" data-mode="${k}">${l}</button>`).join("")}
           </div>
-          ${mode.thermostat ? "" : `<span class="rawmode">(receiver: ${mode.raw ?? "unknown"})</span>`}
+          ${mode.mode === "boost" ? `<span class="rawmode">Boost active</span>` : ""}
+          ${ch === "heat" && mode.mode === "manual" ? `<span class="target"><button class="step" data-nudge="-0.5">−</button><b>${mode.target ?? "–"}°</b><button class="step" data-nudge="0.5">+</button></span>` : ""}
         </div>
         ${rows}
         <div class="ticks">${ticks}</div>
         ${editor}
         <div class="status">${this._status}</div>
-        ${this._edit ? "" : `<div class="hint">Tap a day to edit. ${mode.thermostat ? "" : "Not running: the receiver is in manual, so HA is in charge."}</div>`}
+        ${this._edit ? "" : `<div class="hint">Tap a day to edit. ${mode.mode === "schedule" ? "" : "The schedule only runs in Schedule mode."}</div>`}
       </ha-card>`;
 
     const $ = (sel) => this.shadowRoot.querySelectorAll(sel);
     $("[data-tab]").forEach((b) => b.addEventListener("click", () => { this._tab = b.dataset.tab; this._edit = null; this._render(); }));
-    $("[data-runs]").forEach((b) => b.addEventListener("click", () => this._setRunsOn(ch, b.dataset.runs === "thermostat")));
+    $("[data-mode]").forEach((b) => b.addEventListener("click", () => this._setMode(ch, b.dataset.mode)));
+    $("[data-nudge]").forEach((b) => b.addEventListener("click", () => this._nudgeTarget(Number(b.dataset.nudge))));
     $(".row").forEach((r) => r.addEventListener("click", () => this._openEditor(Number(r.dataset.day))));
     $("[data-act=refresh]").forEach((b) => b.addEventListener("click", () => { this._sched = { heat: {}, water: {} }; this._edit = null; this._refresh(); }));
     if (this._edit) {
