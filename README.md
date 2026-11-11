@@ -151,3 +151,40 @@ control:
   name: Heating
 header: false
 ```
+
+## Schedule card and receiver clock (SLR2)
+
+The SLR2 receiver holds its own weekly schedule: per channel (heating = endpoint 5,
+hot water = endpoint 6), per day, **exactly 6 transitions** of time + setpoint. Heating
+"off" is 1 °C; hot water is 99 (on) / 0 (off). In `auto` the receiver runs it by itself,
+so the schedule keeps working when Home Assistant is down, and the SLT3 thermostat
+edits the same data. Zigbee2MQTT reads it with
+`<topic>/get {"weekly_schedule_heat": ""}` (one reply per day) and writes it with
+`<topic>/set {"weekly_schedule_heat": {"dayofweek": [...], "transitions": [...]}}`.
+
+### `card/hive-schedule-card.js`
+
+A Lovelace card that shows both schedules as a week grid, edits any day's 6 slots
+(and copies them to other days), and switches each channel between
+**Thermostat schedule** (receiver in `auto`) and **Home Assistant** (receiver in
+manual, so automations drive it). Copy it to `/config/www/`, register
+`/local/hive-schedule-card.js` as a `module` resource, then:
+
+```yaml
+type: custom:hive-schedule-card
+topic: z2m/heating                       # z2m base topic + friendly name
+heat_entity: climate.heating_climate      # from hive_local_thermostat
+water_entity: select.heating_water_mode   # from hive_local_thermostat
+```
+
+It talks to the receiver over HA's websocket `mqtt/subscribe`, which only an
+**admin** user may call; other users see an error instead of the grid. Bump the
+`?v=` on the resource URL after updating the file, or browsers keep the old copy.
+
+### `SLR2/config_automation/clock_sync.yaml`
+
+The receiver never syncs its clock from Zigbee2MQTT: it polls the coordinator's
+`timeStatus` every 10 s but never reads the time. After a power cut or re-pair it
+sits at 2001-01-01 00:00, the thermostat copies that, and no schedule runs. This
+automation writes the time and the current UTC offset into its `genTime` cluster
+hourly, at HA start, and when the receiver rejoins.
