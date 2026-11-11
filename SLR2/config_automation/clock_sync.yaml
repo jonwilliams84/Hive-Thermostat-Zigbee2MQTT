@@ -1,0 +1,30 @@
+# Append under `automation:` (HA package or automations.yaml). Base topic here is `z2m/`;
+# change it if yours is `zigbee2mqtt/`.
+# The SLR2 receiver never sets its own clock from z2m: it polls the coordinator's
+# timeStatus every 10 s but never reads the time, so after any power cut or re-pair
+# it sits at 2001-01-01 00:00 and the SLT3 thermostat copies that, which breaks
+# every schedule. Push UTC (Zigbee epoch = 2000-01-01) and the current UK offset
+# hourly, at start-up and when the receiver rejoins. timeZone follows BST because
+# it is recomputed every hour; dstShift stays 0 so the device never double-applies.
+- id: hive_receiver_clock_sync
+  alias: 'Heating - Receiver clock sync'
+  description: 'Writes the time and UK offset into the Hive SLR2 genTime cluster (it never syncs itself)'
+  mode: single
+  triggers:
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: 2
+    - trigger: mqtt
+      topic: z2m/bridge/event
+      value_template: "{{ value_json.type }}:{{ value_json.data.friendly_name | default('') }}"
+      payload: 'device_announce:heating'
+  actions:
+    - action: mqtt.publish
+      data:
+        topic: z2m/heating/set
+        payload: >-
+          {"write": {"cluster": "genTime", "options": {"endpoint": 5}, "payload": {
+            "time": {{ (now().timestamp() | int) - 946684800 }},
+            "timeZone": {{ now().utcoffset().total_seconds() | int }},
+            "dstShift": 0}}}
